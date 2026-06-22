@@ -4,11 +4,12 @@ import datetime
 import os
 
 # Import modular backend components
-from backend.db import init_db, load_query_data, save_osint_report
+from backend.db import init_db, load_query_data, save_osint_report, load_feed_articles
 from backend.policy_engine import evaluate_prompt_architecture
 from backend.pipeline_core import execute_live_evaluation
 from backend.threat_ops import IoC, ThreatIntelReport, scrape_messy_html, extract_threat_intel
 from backend.cloud_services import fetch_and_store_cloud_status, generate_morning_briefing, fetch_live_threat_feeds
+from backend.feed_triage import ingest_and_triage_feeds
 from backend.policy_engine import audit_model_output
 from backend.telemetry import log_sandbox_execution
 import os
@@ -109,34 +110,177 @@ if page == "🪽 Hermes (AI Morning Briefing)":
         st.caption("Click the button above to synthesize a tactical morning briefing powered by live Cerberus feeds.")
     
 elif page == "🐕 Cerberus (Raw Intel Feeds)":
-    st.header("Raw Firehose Operations")
-    
-    col1, col2 = st.columns([2, 1])
-    with col1:
-        st.subheader("🎯 Local Threat Telemetry (DuckDB)")
-        threat_df = load_query_data("SELECT timestamp, severity, source_ip, event_type, description FROM local_threats ORDER BY timestamp DESC")
-        if not threat_df.empty:
-            st.dataframe(threat_df, use_container_width=True, hide_index=True)
-        else:
-            st.warning("No security events currently found inside the local analytics engine.")
-            
-    with col2:
-        st.subheader("📊 Severity Metrics")
-        metric_df = load_query_data("SELECT severity, count(*) as total FROM local_threats GROUP BY severity")
-        if not metric_df.empty:
-            chart_data = metric_df.set_index('severity')['total']
-            st.bar_chart(chart_data, use_container_width=True)
-        else:
-            st.caption("Awaiting raw events for metrics plotting...")
+    st.header("🐕 Cerberus — Threat Intelligence Firehose")
+    st.markdown(
+        "Live RSS/Atom ingestion from **The Hacker News**, **BleepingComputer**, and **CISA Alerts**. "
+        "Each article is triaged by Gemini Flash and routed to the appropriate intelligence tier."
+    )
+
+    # -----------------------------------------------------------------------
+    # Sync Control Bar
+    # -----------------------------------------------------------------------
+    api_key_present = bool(os.environ.get("GEMINI_API_KEY", "").strip())
+
+    sync_col, msg_col = st.columns([1, 3])
+    with sync_col:
+        sync_clicked = st.button(
+            "🔄 Sync Threat Feeds",
+            type="primary",
+            disabled=not api_key_present,
+            use_container_width=True,
+        )
+    with msg_col:
+        if not api_key_present:
+            st.warning(
+                "⚠️ **GEMINI_API_KEY** not configured. "
+                "Enter it in the 🦉 Athena (Deep Analysis) tab to enable AI triage."
+            )
+
+    if sync_clicked:
+        with st.spinner(
+            "Cerberus pulling feeds — Gemini Flash classifying each article…"
+        ):
+            counts = ingest_and_triage_feeds()
+        st.cache_data.clear()
+        st.success(
+            f"✅ Sync complete — "
+            f"🔴 **{counts['high']} HIGH** · "
+            f"⚡ **{counts['medium']} MEDIUM** · "
+            f"🌑 **{counts['low']} LOW** · "
+            f"{counts['errors']} error(s)"
+        )
 
     st.divider()
-    
-    st.subheader("📥 Ingested AI OSINT Reports")
-    ai_osint_df = load_query_data("SELECT timestamp, source_url, summary, threat_actors, targeted_industries FROM osint_reports ORDER BY timestamp DESC")
-    if not ai_osint_df.empty:
-        st.dataframe(ai_osint_df, use_container_width=True, hide_index=True)
-    else:
-        st.info("No structured AI reports in database yet. Head to the '🔬 Deep Analysis' module to extract intelligence.")
+
+    # -----------------------------------------------------------------------
+    # Shared card renderer — used by Main Feed and Tactical Threats tabs
+    # -----------------------------------------------------------------------
+    SOURCE_ICONS = {
+        "The Hacker News": "🔴",
+        "BleepingComputer": "🟠",
+        "CISA Alerts":      "🔵",
+    }
+
+    def render_article_cards(df: pd.DataFrame) -> None:
+        """Render a DataFrame of feed articles as bordered card widgets."""
+        if df.empty:
+            st.info(
+                "No articles in this tier yet. "
+                "Click **Sync Threat Feeds** above to ingest the latest intelligence."
+            )
+            return
+        for _, row in df.iterrows():
+            with st.container(border=True):
+                hdr_col, ts_col = st.columns([4, 1])
+                with hdr_col:
+                    icon = SOURCE_ICONS.get(str(row["source"]), "⚪")
+                    st.markdown(f"{icon} &nbsp; **{row['source']}**")
+                with ts_col:
+                    st.caption(str(row.get("ingested_at", ""))[:16])
+                st.markdown(f"**[{row['title']}]({row['url']})**")
+                summary_text = str(row.get("summary", "") or "")
+                if summary_text:
+                    st.caption(
+                        summary_text[:280] + ("…" if len(summary_text) > 280 else "")
+                    )
+
+    # -----------------------------------------------------------------------
+    # Four-Tab Layout
+    # -----------------------------------------------------------------------
+    tab_main, tab_tactical, tab_shadows, tab_telemetry = st.tabs([
+        "📡 Main Feed",
+        "⚡ Tactical Threats",
+        "🌑 The Shadows",
+        "🔬 Local Telemetry",
+    ])
+
+    # --- Tab 1: Main Feed (HIGH) ---
+    with tab_main:
+        st.subheader("📡 Main Feed — Enterprise & Cloud Risk")
+        st.caption(
+            "Systemic enterprise risk, cloud provider incidents, critical infrastructure attacks, "
+            "supply chain compromises, and large-scale platform breaches."
+        )
+        render_article_cards(load_feed_articles("HIGH"))
+
+    # --- Tab 2: Tactical Threats (MEDIUM) ---
+    with tab_tactical:
+        st.subheader("⚡ Tactical Threats — Active Campaigns & Exploits")
+        st.caption(
+            "Active malware, ransomware operations, zero-day exploits with known PoC, "
+            "APT/threat actor campaigns, and mass exploitation events."
+        )
+        render_article_cards(load_feed_articles("MEDIUM"))
+
+    # --- Tab 3: The Shadows (LOW) ---
+    with tab_shadows:
+        st.subheader("🌑 The Shadows — Discarded Noise")
+        st.caption(
+            "LOW-priority items: research papers, vendor announcements, minor advisories, "
+            "and opinion content. Manually review for subtle, creeping threats."
+        )
+        low_df = load_feed_articles("LOW")
+        if not low_df.empty:
+            # Compact, scannable table — lower visual weight than the card view above
+            display_df = low_df[["ingested_at", "source", "title", "url", "summary"]].copy()
+            display_df["title"] = display_df.apply(
+                lambda r: f"[{r['title']}]({r['url']})", axis=1
+            )
+            st.dataframe(
+                display_df[["ingested_at", "source", "title", "summary"]].rename(columns={
+                    "ingested_at": "Ingested",
+                    "source":      "Source",
+                    "title":       "Article",
+                    "summary":     "Summary",
+                }),
+                use_container_width=True,
+                hide_index=True,
+            )
+        else:
+            st.info(
+                "No LOW-priority articles yet. "
+                "Run a sync to populate The Shadows."
+            )
+
+    # --- Tab 4: Local Telemetry (preserved) ---
+    with tab_telemetry:
+        st.subheader("🔬 Local Threat Telemetry")
+
+        tel_col1, tel_col2 = st.columns([2, 1])
+        with tel_col1:
+            st.markdown("**🎯 Network Event Log (DuckDB)**")
+            threat_df = load_query_data(
+                "SELECT timestamp, severity, source_ip, event_type, description "
+                "FROM local_threats ORDER BY timestamp DESC"
+            )
+            if not threat_df.empty:
+                st.dataframe(threat_df, use_container_width=True, hide_index=True)
+            else:
+                st.warning("No security events found in the local analytics engine.")
+
+        with tel_col2:
+            st.markdown("**📊 Severity Breakdown**")
+            metric_df = load_query_data(
+                "SELECT severity, count(*) as total FROM local_threats GROUP BY severity"
+            )
+            if not metric_df.empty:
+                st.bar_chart(metric_df.set_index("severity")["total"], use_container_width=True)
+            else:
+                st.caption("Awaiting raw events for metrics plotting…")
+
+        st.divider()
+        st.markdown("**📥 Ingested AI OSINT Reports**")
+        ai_osint_df = load_query_data(
+            "SELECT timestamp, source_url, summary, threat_actors, targeted_industries "
+            "FROM osint_reports ORDER BY timestamp DESC"
+        )
+        if not ai_osint_df.empty:
+            st.dataframe(ai_osint_df, use_container_width=True, hide_index=True)
+        else:
+            st.info(
+                "No structured AI reports yet. "
+                "Head to the '🦉 Athena (Deep Analysis)' module to extract intelligence."
+            )
 
 elif page == "🦉 Athena (Deep Analysis)":
     st.header("🔬 Deep Analysis Ingestion Workshop")
