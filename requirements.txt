@@ -2,3 +2,5 @@ streamlit==1.40.0
 requests
 duckdb
 pydantic
+pandas
+altair>=5.4.0
