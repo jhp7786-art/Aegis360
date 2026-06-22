@@ -8,7 +8,7 @@ from backend.db import init_db, load_query_data, save_osint_report
 from backend.policy_engine import evaluate_prompt_architecture
 from backend.pipeline_core import execute_live_evaluation
 from backend.threat_ops import IoC, ThreatIntelReport, scrape_messy_html, extract_threat_intel
-from backend.cloud_services import fetch_and_store_cloud_status, generate_morning_briefing
+from backend.cloud_services import fetch_and_store_cloud_status, generate_morning_briefing, fetch_live_threat_feeds
 from backend.policy_engine import audit_model_output
 from backend.telemetry import log_sandbox_execution
 import os
@@ -61,26 +61,52 @@ if page == "🪽 Hermes (AI Morning Briefing)":
         st.info("No cloud tracking metrics found. Trigger a 'Sync Cloud Status APIs' pass via the control panel.")
     
     st.divider()
-    
+
+    # -----------------------------------------------------------------------
+    # CERBERUS HAND-OFF — Fetch live RSS headlines and display them.
+    # The cached result (ttl=3600) is stored in `live_feed_md` and will be
+    # injected directly into the Gemini system prompt payload below.
+    # -----------------------------------------------------------------------
+    st.subheader("📡 Cerberus Live Feed Snapshot")
+    with st.spinner("Pulling live threat headlines from RSS feeds..."):
+        live_feed_md: str = fetch_live_threat_feeds()  # cached — fast after first call
+
+    if live_feed_md:
+        with st.expander("View Raw Intelligence Headlines", expanded=False):
+            st.markdown(live_feed_md)
+        st.caption("🕐 Feed data is cached for 60 minutes. Use 'Purge Telemetry Cache' in the sidebar to force a refresh.")
+    else:
+        st.warning("⚠️ No live feed data could be retrieved. Gemini briefing will rely solely on local telemetry.")
+        live_feed_md = "_Live feed unavailable at this time._"
+
+    st.divider()
+
+    # -----------------------------------------------------------------------
+    # HERMES SYNTHESIS — Pass the Cerberus Markdown payload to Gemini.
+    # `live_feed_md` is already threaded into generate_morning_briefing()
+    # via fetch_live_threat_feeds() being called inside that function.
+    # -----------------------------------------------------------------------
     st.subheader("Intelligence Synthesis")
-    
+
     api_key_configured = True
     if not os.environ.get("GEMINI_API_KEY"):
         st.warning("⚠️ GEMINI_API_KEY environment variable not detected. Please configure it in the Deep Analysis tab first.")
         api_key_configured = False
 
     if st.button("Generate CISO Briefing", disabled=not api_key_configured):
-        with st.spinner("Analyzing log telemetry and correlation graphs via Gemini..."):
+        with st.spinner("HERMES synthesizing live threat intelligence via Gemini..."):
             try:
                 local_threats_df = load_query_data("SELECT * FROM local_threats")
-                osint_df = load_query_data("SELECT * FROM osint_reports")
-                
+                osint_df         = load_query_data("SELECT * FROM osint_reports")
+
+                # generate_morning_briefing internally calls fetch_live_threat_feeds()
+                # (cached) and injects its Markdown into the Gemini system prompt.
                 briefing = generate_morning_briefing(local_threats_df, osint_df)
                 st.markdown(briefing)
             except Exception as e:
                 st.error(f"Failed to generate briefing: {e}")
     else:
-        st.caption("Click the button above to synthesize a customized tactical briefing.")
+        st.caption("Click the button above to synthesize a tactical morning briefing powered by live Cerberus feeds.")
     
 elif page == "🐕 Cerberus (Raw Intel Feeds)":
     st.header("Raw Firehose Operations")
