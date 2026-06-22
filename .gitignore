@@ -1,0 +1,12 @@
+# Local database files
+*.duckdb
+*.duckdb.wal
+*.db
+
+# Streamlit local secrets
+.streamlit/secrets.toml
+
+# Python virtual environments
+.venv/
+venv/
+__pycache__/
