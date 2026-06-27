@@ -2,6 +2,8 @@ import streamlit as st
 import pandas as pd
 import datetime
 import os
+import re
+import time
 
 # Import modular backend components
 from backend.db import init_db, load_query_data, save_osint_report, load_feed_articles
@@ -12,11 +14,16 @@ from backend.cloud_services import fetch_and_store_cloud_status, generate_mornin
 from backend.feed_triage import ingest_and_triage_feeds
 from backend.policy_engine import audit_model_output
 from backend.telemetry import log_sandbox_execution
-import os
+from tools.aegis_wrapper import KnoxPayload
+
 if os.environ.get("GEMINI_API_KEY") == "dummy_key":
     os.environ["GEMINI_API_KEY"] = ""
 # --- App Initialization ---
 init_db()
+
+# Initialize session state for Salesfort Knox OAuth token
+if "salesfort_knox_token" not in st.session_state:
+    st.session_state.salesfort_knox_token = None
 
 # --- Streamlit UI Layout ---
 st.set_page_config(page_title="Aegis360 | Threat Intel", page_icon="🛡️", layout="wide")
@@ -26,7 +33,14 @@ st.markdown("Welcome to your personal Cyber Security Operations Center.")
 
 # --- Sidebar UI ---
 st.sidebar.header("Olympus Modules")
-page = st.sidebar.radio("Go to", ["🪽 Hermes (AI Morning Briefing)", "🐕 Cerberus (Raw Intel Feeds)", "🦉 Athena (Deep Analysis)", "👁️ CYclOPS (AI Sandbox)"])
+page = st.sidebar.radio("Go to", [
+    "🪽 Hermes (AI Morning Briefing)", 
+    "🐕 Cerberus (Raw Intel Feeds)", 
+    "🦉 Athena (Deep Analysis)", 
+    "👁️ CYclOPS (AI Sandbox)",
+    "⚔️ Ares (Offense)",
+    "🛡️ Argus (Defense)"
+])
 
 st.sidebar.divider()
 st.sidebar.header("System Controls")
@@ -459,4 +473,155 @@ elif page ==  "👁️ CYclOPS (AI Sandbox)":
                     # Layer 4 Metrics Storage
                     log_sandbox_execution(user_payload, agent_response, "PASSED", audit_result["status"])
                     st.caption("💾 Forensic runtime telemetry successfully logged to DuckDB backend instance.")
+
+elif "Ares (Offense)" in page:
+    st.header("⚔️ Ares (Offense)")
+    st.markdown("Offensive security tooling simulation pipeline for validating endpoint defenses and payload delivery integrity.")
+    st.divider()
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.subheader("🐖 Piggy Loader")
+        st.caption("Simulate a stealthy secondary stage DLL/executable loader executing in memory.")
+        if st.button("Trigger Piggy Loader Execution", type="primary", use_container_width=True):
+            with st.spinner("Executing Piggy Loader payload..."):
+                time.sleep(1.5)
+                payload_data = {
+                    "loader_module": "piggy_loader.exe",
+                    "injection_target": "explorer.exe",
+                    "payload_type": "reflective_dll",
+                    "execution_status": "injected",
+                    "bytes_written": 262144
+                }
+                payload = KnoxPayload(tool_name="Piggy Loader", threat_level="High", data=payload_data)
+                st.success("✅ Piggy Loader payload execution completed successfully.")
+                st.json(payload.to_json())
+
+    with col2:
+        st.subheader("📐 Blueprint Bastard")
+        st.caption("Analyze, map, and exploit exposed API endpoints and schema definitions.")
+        target_url = st.text_input("Target API URL", placeholder="https://api.example.com/v1")
+        if st.button("Trigger Blueprint Bastard", type="primary", use_container_width=True):
+            if not target_url.strip():
+                st.error("Please provide a target API URL to scan.")
+            else:
+                with st.spinner(f"Analyzing API endpoints at {target_url}..."):
+                    time.sleep(2.0)
+                    payload_data = {
+                        "target_api_url": target_url,
+                        "endpoints_discovered": [
+                            {"path": "/users", "method": "GET", "status": "exposed"},
+                            {"path": "/admin/config", "method": "POST", "status": "vulnerable"}
+                        ],
+                        "auth_bypass_vector": "Missing token validation on administrative endpoint",
+                        "cve_references": ["CVE-2023-4567"]
+                    }
+                    payload = KnoxPayload(tool_name="Blueprint Bastard", threat_level="Critical", data=payload_data)
+                    st.warning("⚠️ Blueprint Bastard completed: Critical vulnerabilities found in target API endpoints!")
+                    st.json(payload.to_json())
+
+elif "Argus (Defense)" in page:
+    st.header("🛡️ Argus (Defense)")
+    st.markdown("Defensive threat inspection pipeline. Detoxify email payloads and inspect prompts for injection attacks.")
+    st.divider()
+
+    # --- Salesfort Knox Session State Section ---
+    st.subheader("🔑 Salesfort Knox Integration")
+    st.caption("Manage authentication tokens for the Salesfort Knox defensive vault API.")
+    
+    token_col1, token_col2 = st.columns([2, 1])
+    with token_col1:
+        if st.session_state.salesfort_knox_token:
+            st.success("🔒 Salesfort Knox OAuth Access Token is active and saved in session state.")
+        else:
+            st.info("🔓 No active OAuth token stored in session state. Please provide a token below to initialize.")
+            
+    with token_col2:
+        new_token = st.text_input("Enter Access Token", type="password", key="new_token_input")
+        if st.button("Save Token to Session State", use_container_width=True):
+            st.session_state.salesfort_knox_token = new_token
+            st.rerun()
+            
+    if st.session_state.salesfort_knox_token:
+        if st.button("Revoke Token (Clear Session)", use_container_width=True):
+            st.session_state.salesfort_knox_token = None
+            st.rerun()
+
+    st.divider()
+
+    # --- Two-column layout for The Bouncer and Phish Fryer ---
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.subheader("🚪 The Bouncer")
+        st.caption("Inspect inbound LLM prompt payloads for prompt injection vectors.")
+        bouncer_prompt = st.text_area("Inbound Prompt Payload", placeholder="Enter prompt to inspect...")
+        if st.button("Inspect Prompt", type="primary", use_container_width=True):
+            if not bouncer_prompt.strip():
+                st.error("Please provide a prompt to audit.")
+            else:
+                with st.spinner("Inspecting prompt for injection attempts..."):
+                    time.sleep(1.0)
+                    # Utilize the actual policy engine
+                    audit_res = evaluate_prompt_architecture(bouncer_prompt)
+                    threat_level = "High" if audit_res["status"] == "REJECTED" else "Low"
+                    payload = KnoxPayload(tool_name="The Bouncer", threat_level=threat_level, data=audit_res)
+                    
+                    if threat_level == "High":
+                        st.error(f"🚨 Prompt Injection Detected! Status: {audit_res['status']}")
+                        st.warning(f"**Reason:** {audit_res['reason']}")
+                    else:
+                        st.success("✅ Prompt is clean. No injection vectors detected.")
+                    st.json(payload.to_json())
+
+    with col2:
+        st.subheader("🍳 Phish Fryer")
+        st.caption("Detonate suspicious email headers and bodies inside an isolated phishing analysis sandbox.")
+        uploaded_file = st.file_uploader("Upload Email File (.eml, .txt)", type=["eml", "txt"])
+        if st.button("Trigger Sandbox Detonation", type="primary", use_container_width=True):
+            if not uploaded_file:
+                st.error("Please upload an .eml or .txt file first.")
+            else:
+                with st.spinner("Detonating email package in isolated sandbox..."):
+                    time.sleep(1.5)
+                    try:
+                        file_content = uploaded_file.read().decode("utf-8", errors="ignore")
+                        # Basic scan for URLs and key indicators
+                        urls = re.findall(r'https?://[^\s<>"]+|www\.[^\s<>"]+', file_content)
+                        suspicious_keywords = ["urgent", "password", "bank", "invoice", "payment", "login", "reset", "verify"]
+                        found_keywords = [kw for kw in suspicious_keywords if kw in file_content.lower()]
+                        
+                        phishing_score = 10
+                        if urls:
+                            phishing_score += 40
+                        if found_keywords:
+                            phishing_score += 10 * len(found_keywords)
+                        phishing_score = min(phishing_score, 100)
+                        
+                        threat_level = "Low"
+                        if phishing_score >= 70:
+                            threat_level = "Critical"
+                        elif phishing_score >= 40:
+                            threat_level = "High"
+                        elif phishing_score >= 20:
+                            threat_level = "Medium"
+                            
+                        data = {
+                            "filename": uploaded_file.name,
+                            "file_size_bytes": uploaded_file.size,
+                            "detected_links": urls,
+                            "suspicious_keywords": found_keywords,
+                            "phishing_risk_score": phishing_score
+                        }
+                        
+                        payload = KnoxPayload(tool_name="Phish Fryer", threat_level=threat_level, data=data)
+                        
+                        if phishing_score >= 40:
+                            st.warning(f"⚠️ Detonation Warning: Suspicious phishing indicators found! Risk Score: {phishing_score}/100")
+                        else:
+                            st.success(f"✅ Detonation Complete: Email cleared. Risk Score: {phishing_score}/100")
+                        st.json(payload.to_json())
+                    except Exception as e:
+                        st.error(f"Error reading or processing file: {e}")
                

@@ -4,3 +4,5 @@ duckdb
 pydantic
 pandas
 altair==5.3.0
+PyJWT
+cryptography
